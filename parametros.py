@@ -1,83 +1,83 @@
-import cv2
 import numpy as np
-from sklearn.linear_model import LinearRegression
+import cv2
+import pandas as pd
+from scipy.interpolate import CubicSpline
+from scipy.signal import savgol_filter
 
-# --- 1. Configuración ---
-ARCHIVO = 'Figure_1.png'  # Cambia por tu imagen
-UMBRAL_RECTA = 0.98      # Umbral de correlación para detectar rectas (0 a 1)
-RADIO_CURVA = 30         # Radio fijo para curvas (metros)
+# --- 1. Cargar imagen y detectar la curva ---
+img = cv2.imread('BicoDePatoSquema.png')
+hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-# --- 2. Procesamiento de imagen ---
-img = cv2.imread(ARCHIVO)
-gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-_, thresh = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)  # Ajusta 250 para eliminar cuadrícula
+# Ajustar estos valores según el color de tu curva
+lower_color = np.array([0, 0, 200])
+upper_color = np.array([180, 50, 255])
+mask = cv2.inRange(hsv, lower_color, upper_color)
 
-# --- 3. Extraer curva principal ---
-contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-curva = max(contornos, key=cv2.contourArea).squeeze()
+# Encontrar contornos y extraer puntos
+contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+curve_points = contours[0].squeeze()
 
-# --- 4. Convertir a coordenadas reales ---
-ESCALA_X, ESCALA_Y = 0.1, 0.1  # Ajusta según tu gráfico
-x = curva[:, 0] * ESCALA_X
-y = (img.shape[0] - curva[:, 1]) * ESCALA_Y  # Invertir Y
+# Escalar puntos a coordenadas reales
+x = curve_points[:, 0] * (100 / img.shape[1])  # X ∈ [0, 100]
+y = (img.shape[0] - curve_points[:, 1]) * (80 / img.shape[0])  # Y ∈ [0, 80]
 
-# --- 5. Detección de segmentos ---
-segmentos = []
-inicio = 0
-tolerancia = 10  # Puntos mínimos para analizar
+# Suavizar datos
+x_smooth = savgol_filter(x, window_length=15, polyorder=2)
+y_smooth = savgol_filter(y, window_length=15, polyorder=2)
 
-for fin in range(tolerancia, len(x), 5):  # Saltar cada 5 puntos para eficiencia
-    # Verificar si es recta
-    X = x[inicio:fin].reshape(-1, 1)
-    Y = y[inicio:fin]
-    modelo = LinearRegression().fit(X, Y)
-    score = modelo.score(X, Y)  # Coeficiente R²
+# --- 2. Parametrización con splines cúbicos ---
+t = np.linspace(0, 1, len(x_smooth))
+cs_x = CubicSpline(t, x_smooth)
+cs_y = CubicSpline(t, y_smooth)
+
+# --- 3. Preparar datos para CSV ---
+# Transponer coeficientes para obtener shape (n_segmentos, 4)
+coef_x = cs_x.c.T
+coef_y = cs_y.c.T
+
+# Crear lista de diccionarios con los datos de cada segmento
+segment_data = []
+step = 1  # Saltar cada 2 segmentos (ajusta este valor según necesites)
+
+for i in range(0, len(cs_x.x) - 1, step):  # Nota: el -1 debe permanecer
+    t_start = cs_x.x[i]
+    t_end = cs_x.x[i + step] if (i + step) < len(cs_x.x) else cs_x.x[-1]  # Evita desborde
     
-    if score > UMBRAL_RECTA:  # Es recta
-        angulo = np.degrees(np.arctan(modelo.coef_[0]))
-        longitud = np.sqrt((x[fin] - x[inicio])**2 + (y[fin] - y[inicio])**2)
-        segmentos.append({
-            'tipo': 'recta',
-            'inicio': (x[inicio], y[inicio]),
-            'fin': (x[fin], y[fin]),
-            'longitud': longitud,
-            'angulo': angulo
-        })
-        inicio = fin
-    else:  # Es curva
-        longitud_arco = np.sum(np.sqrt(np.diff(x[inicio:fin])**2 + np.diff(y[inicio:fin])**2))
-        segmentos.append({
-            'tipo': 'curva',
-            'radio': RADIO_CURVA,
-            'longitud': longitud_arco,
-            'puntos': (x[inicio:fin], y[inicio:fin])
-        })
-        inicio = fin
+    segment_data.append({
+        'segmento': (i // step) + 1,  # Nuevo número de segmento
+        't_inicio': t_start,
+        't_fin': t_end,
+        'a_x': coef_x[i, 0],
+        'b_x': coef_x[i, 1],
+        'c_x': coef_x[i, 2],
+        'd_x': coef_x[i, 3],
+        'a_y': coef_y[i, 0],
+        'b_y': coef_y[i, 1],
+        'c_y': coef_y[i, 2],
+        'd_y': coef_y[i, 3]
+    })
 
-# --- 6. Resultados ---
-print("=== SEGMENTOS DETECTADOS ===")
-for i, seg in enumerate(segmentos):
-    if seg['tipo'] == 'recta':
-        print(f"Recta {i+1}:")
-        print(f"  - Longitud: {seg['longitud']:.2f} m")
-        print(f"  - Ángulo: {seg['angulo']:.2f}°")
-        print(f"  - Puntos: ({seg['inicio'][0]:.1f}, {seg['inicio'][1]:.1f}) a ({seg['fin'][0]:.1f}, {seg['fin'][1]:.1f})")
-    else:
-        print(f"Curva {i+1}:")
-        print(f"  - Longitud: {seg['longitud']:.2f} m")
-        print(f"  - Radio: {seg['radio']} m (fijo)")
-    print("---")
+# Crear DataFrame y guardar como CSV
+df = pd.DataFrame(segment_data)
+csv_filename = 'parametrizacion_bico_de_pato_10.csv'
+df.to_csv(csv_filename, index=False, float_format='%.8f')
 
-# --- 7. Visualización (opcional) ---
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 6))
-for seg in segmentos:
-    if seg['tipo'] == 'recta':
-        plt.plot([seg['inicio'][0], seg['fin'][0]], [seg['inicio'][1], seg['fin'][1]], 'b-', linewidth=2)
-    else:
-        plt.plot(seg['puntos'][0], seg['puntos'][1], 'r-', linewidth=2)
-plt.xlabel('X (metros)')
-plt.ylabel('Y (metros)')
-plt.title('Segmentos detectados: Rectas (azul) y Curvas (rojo)')
-plt.grid(True)
-plt.show()
+# --- 4. Mostrar confirmación ---
+print(f"\nParametrización guardada en '{csv_filename}'")
+print(f"Número total de segmentos: {len(df)}")
+print("\nPrimeras filas del archivo CSV:")
+print(df.head())
+
+# Mostrar ejemplo de cómo usar los coeficientes
+print("\nEjemplo de uso para el primer segmento:")
+print(f"Para t ∈ [{df.iloc[0]['t_inicio']:.4f}, {df.iloc[0]['t_fin']:.4f}]:")
+print("x(t) = {:.8f}·(t-{:.4f})³ + {:.8f}·(t-{:.4f})² + {:.8f}·(t-{:.4f}) + {:.8f}".format(
+    df.iloc[0]['a_x'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['b_x'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['c_x'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['d_x']))
+print("y(t) = {:.8f}·(t-{:.4f})³ + {:.8f}·(t-{:.4f})² + {:.8f}·(t-{:.4f}) + {:.8f}".format(
+    df.iloc[0]['a_y'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['b_y'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['c_y'], df.iloc[0]['t_inicio'],
+    df.iloc[0]['d_y']))
