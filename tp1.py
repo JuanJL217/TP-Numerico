@@ -49,7 +49,6 @@ def rk4(f, y0, t):
         y[i] = y[i-1] + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
     return y
 
-# --- Calcula aceleración lateral ---
 def aceleracion_lateral(v, r):
     return v**2 / r if r > 0 else 0
 
@@ -72,7 +71,7 @@ def f_recta(y, t, longitud, v_max_curva):
 
 def f_curva_rk4(y, t):
     theta, omega = y
-    return np.array([omega, 0])  # omega constante, sin aceleración angular
+    return np.array([omega, 0])
 
 def simular_trayectoria():
     d_recta1 = distancia_puntos(puntos['p1'], puntos['p2'])
@@ -88,7 +87,6 @@ def simular_trayectoria():
         ('curva', radios['arco2'], ang2),
         ('recta', d_recta_final, None)
     ]
-
 
     tiempos_totales = []
     posiciones_totales = []
@@ -187,46 +185,10 @@ def simular_trayectoria():
         else:
             raise ValueError("Tipo de tramo desconocido")
 
-    return (np.array(tiempos_totales), np.array(posiciones_totales),
-            np.array(velocidades_totales), np.array(fuerzas_totales),
-            np.array(aceleraciones_lat_totales))
-
-def graficar(tiempos, posiciones, velocidades, fuerzas, aceleraciones_lat):
-    _, axs = plt.subplots(2, 2, figsize=(14, 10))
-    axs = axs.flatten()
-
-    axs[0].plot(tiempos, posiciones)
-    axs[0].set_title("Posición total (m)")
-    axs[0].set_xlabel("Tiempo (s)")
-    axs[0].set_ylabel("Posición (m)")
-    axs[0].grid()
-
-    axs[1].plot(tiempos, velocidades)
-    axs[1].set_title("Velocidad (m/s)")
-    axs[1].set_xlabel("Tiempo (s)")
-    axs[1].set_ylabel("Velocidad (m/s)")
-    axs[1].grid()
-
-    axs[2].plot(tiempos, fuerzas)
-    axs[2].set_title("Fuerza aplicada (N)")
-    axs[2].set_xlabel("Tiempo (s)")
-    axs[2].set_ylabel("Fuerza (N)")
-    axs[2].grid()
-
-    axs[3].plot(tiempos, aceleraciones_lat)
-    axs[3].axhline(A_MAX, color='r', linestyle='--', label='6g límite')
-    axs[3].set_title("Aceleración lateral (m/s²)")
-    axs[3].set_xlabel("Tiempo (s)")
-    axs[3].set_ylabel("Aceleración lateral (m/s²)")
-    axs[3].legend()
-    axs[3].grid()
-
-    plt.tight_layout()
-    plt.show()
+    return np.array(tiempos_totales)
 
 
 def main():
-    tiempos, posiciones, velocidades, fuerzas, aceleraciones_lat = simular_trayectoria()
+    tiempos = simular_trayectoria()
     print(f"Tiempo total de la trayectoria: {tiempos[-1]:.2f} segundos")
-    graficar(tiempos, posiciones, velocidades, fuerzas, aceleraciones_lat)
 main()
