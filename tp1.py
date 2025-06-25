@@ -129,7 +129,10 @@ def simular_trayectoria():
             v_max = np.sqrt(A_MAX * radio)
             v_actual = min(v_actual, v_max)
             omega = v_actual / radio
-
+            
+            print(f"Ángulo central del arco: {angulo:.2f} rad  ({np.degrees(angulo):.1f}°)")
+            print(f"Longitud del arco: {radio * angulo:.2f} m")
+            
             t = np.arange(0, angulo / omega + DT, DT)
             y0 = np.array([0, omega])
             res = rk4(f_curva, y0, t)
