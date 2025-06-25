@@ -37,21 +37,20 @@ def angulo_arco(centro, p_inicio, p_fin):
     cos_theta = np.dot(v1, v2) / (np.linalg.norm(v1)*np.linalg.norm(v2))
     return np.arccos(np.clip(cos_theta, -1.0, 1.0))
 
-def rk4(f, y0, t):
+def rk4(f, y0, t, *args, **kwargs):
     y = np.zeros((len(t), len(y0)))
     y[0] = y0
     for i in range(1, len(t)):
         dt = t[i] - t[i-1]
-        k1 = f(y[i-1], t[i-1])
-        k2 = f(y[i-1] + dt/2 * k1, t[i-1] + dt/2)
-        k3 = f(y[i-1] + dt/2 * k2, t[i-1] + dt/2)
-        k4 = f(y[i-1] + dt * k3, t[i-1] + dt)
+        k1 = f(y[i-1], t[i-1], *args, **kwargs)
+        k2 = f(y[i-1] + dt/2 * k1, t[i-1] + dt/2, *args, **kwargs)
+        k3 = f(y[i-1] + dt/2 * k2, t[i-1] + dt/2, *args, **kwargs)
+        k4 = f(y[i-1] + dt * k3, t[i-1] + dt, *args, **kwargs)
         y[i] = y[i-1] + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
     return y
 
 def aceleracion_lateral(v, r):
     return v**2 / r if r > 0 else 0
-
 
 def fuerza_recta(v, v_max_curva):
     if v > v_max_curva:
@@ -63,35 +62,30 @@ def fuerza_recta(v, v_max_curva):
 
 def f_recta(y, t, longitud, v_max_curva):
     x, v = y
-    F = fuerza_recta(v, v_max_curva)
-    a = F / MASA
-    if x >= longitud:
-        a = 0
+    a = fuerza_recta(v, v_max_curva) / MASA if x < longitud else 0
     return np.array([v, a])
 
-def f_curva_rk4(y, t):
-    theta, omega = y
+def f_curva(y, t):
+    _, omega = y
     return np.array([omega, 0])
 
 def simular_trayectoria():
-    d_recta1 = distancia_puntos(puntos['p1'], puntos['p2'])
+    d1 = distancia_puntos(puntos['p1'], puntos['p2'])
     ang1 = angulo_arco(centros['arco1'], puntos['p2'], puntos['p3'])
-    d_recta2 = distancia_puntos(puntos['p3'], puntos['p4'])
+    d2 = distancia_puntos(puntos['p3'], puntos['p4'])
     ang2 = angulo_arco(centros['arco2'], puntos['p4'], puntos['p5'])
-    d_recta_final = distancia_puntos(puntos['p5'], puntos['p6'])
+    d3 = distancia_puntos(puntos['p5'], puntos['p6'])
 
     segmentos = [
-        ('recta', d_recta1, None),
+        ('recta', d1, radios['arco1']),
         ('curva', radios['arco1'], ang1),
-        ('recta', d_recta2, None),
+        ('recta', d2, radios['arco2']),
         ('curva', radios['arco2'], ang2),
-        ('recta', d_recta_final, None)
+        ('recta', d3, None)
     ]
 
-    tiempos_totales = []
-    posiciones_totales = []
-    velocidades_totales = []
-    fuerzas_totales = []
+    tiempos_totales, posiciones_totales = [], []
+    velocidades_totales, fuerzas_totales = [], []
     aceleraciones_lat_totales = []
 
     v_actual = V_INICIAL
@@ -99,96 +93,62 @@ def simular_trayectoria():
     tiempo_acum = 0
 
     for i, tramo in enumerate(segmentos):
-        tipo = tramo[0]
+        tipo, valor1, valor2 = tramo
         print(f"\n--- Tramo {i+1}: Tipo = {tipo} ---")
-        print(f"Velocidad inicial tramo: {v_actual:.2f} m/s")
+        print(f"Velocidad inicial: {v_actual:.2f} m/s")
 
         if tipo == 'recta':
-            longitud = tramo[1]
-            radio_curva_siguiente = tramo[2]
-
-
-            if radio_curva_siguiente is None:
-                v_max_curva = np.inf
-            else:
-                v_max_curva = np.sqrt(A_MAX * radio_curva_siguiente)
+            longitud = valor1
+            radio_curva_siguiente = valor2
+            v_max_curva = np.sqrt(A_MAX * radio_curva_siguiente) if radio_curva_siguiente else np.inf
 
             y0 = np.array([0, v_actual])
             t = np.arange(0, 60, DT)
-            res = [y0]
-            tiempo_real = [0]
+            res = rk4(f_recta, y0, t, longitud, v_max_curva)
 
-            for j in range(1, len(t)):
-                dt = t[j] - t[j-1]
-                k1 = f_recta(res[-1], t[j-1], longitud, v_max_curva)
-                k2 = f_recta(res[-1] + dt/2 * k1, t[j-1] + dt/2, longitud, v_max_curva)
-                k3 = f_recta(res[-1] + dt/2 * k2, t[j-1] + dt/2, longitud, v_max_curva)
-                k4 = f_recta(res[-1] + dt * k3, t[j-1] + dt, longitud, v_max_curva)
-                y_next = res[-1] + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+            idx_final = np.argmax(res[:,0] >= longitud)
+            if res[idx_final, 0] > longitud:
+                res[idx_final, 0] = longitud
+            res = res[:idx_final+1]
+            t = t[:idx_final+1]
 
-                if j % 100 == 0:
-                    a_actual = f_recta(res[-1], t[j-1], longitud, v_max_curva)[1]
-                    print(f"t={t[j]:.2f}s, pos={y_next[0]:.2f}m, v={y_next[1]:.2f}m/s, a={a_actual:.2f}m/s²")
-
-                if y_next[0] >= longitud:
-                    y_next[0] = longitud
-                    res.append(y_next)
-                    tiempo_real.append(t[j])
-                    break
-                res.append(y_next)
-                tiempo_real.append(t[j])
-
-            res = np.array(res)
-            t_tramo = tiempo_real[-1]
             v_actual = res[-1,1]
             pos_acum += longitud
-            tiempo_acum += t_tramo
+            tiempo_acum += t[-1]
 
-            print(f"Velocidad final tramo recta: {v_actual:.2f} m/s")
-            print(f"Tiempo tramo recta: {t_tramo:.2f} s")
-            print(f"Distancia tramo recta: {longitud:.2f} m")
+            print(f"Tiempo tramo recta: {t[-1]:.2f} s")
 
-            tiempos_totales.extend(tiempo_acum - t_tramo + np.array(tiempo_real))
+            tiempos_totales.extend(tiempo_acum - t[-1] + t)
             posiciones_totales.extend(pos_acum - longitud + res[:,0])
             velocidades_totales.extend(res[:,1])
-            fuerzas_totales.extend([
-                fuerza_recta(v, v_max_curva) for v in res[:,1]
-            ])
+            fuerzas_totales.extend([fuerza_recta(v, v_max_curva) for v in res[:,1]])
             aceleraciones_lat_totales.extend([0]*len(res))
 
         elif tipo == 'curva':
-            radio = tramo[1]
-            angulo = tramo[2]
-
+            radio, angulo = valor1, valor2
             v_max = np.sqrt(A_MAX * radio)
             v_actual = min(v_actual, v_max)
+            omega = v_actual / radio
 
-            t_angular = np.arange(0, angulo / (v_actual / radio) + DT, DT)
-            y0 = np.array([0, v_actual / radio])
+            t = np.arange(0, angulo / omega + DT, DT)
+            y0 = np.array([0, omega])
+            res = rk4(f_curva, y0, t)
 
-            res = rk4(f_curva_rk4, y0, t_angular)
-
-            tiempo_acum += t_angular[-1]
+            tiempo_acum += t[-1]
             pos_acum += radio * angulo
 
-            print(f"Velocidad tramo curva: {v_actual:.2f} m/s")
-            print(f"Tiempo tramo curva: {t_angular[-1]:.2f} s")
-            print(f"Longitud arco curva: {radio*angulo:.2f} m")
-            print(f"Aceleración lateral máxima permitida: {A_MAX:.2f} m/s²")
+            print(f"Tiempo tramo curva: {t[-1]:.2f} s")
 
-            tiempos_totales.extend(tiempos_totales[-1] + t_angular if tiempos_totales else t_angular)
-            posiciones_totales.extend([pos_acum - radio*angulo + radio*res[i,0] for i in range(len(res))])
-            velocidades_totales.extend([omega*radio for _, omega in res])
+            tiempos_totales.extend(tiempos_totales[-1] + t if tiempos_totales else t)
+            posiciones_totales.extend([pos_acum - radio*angulo + radio * y[0] for y in res])
+            velocidades_totales.extend([y[1] * radio for y in res])
             fuerzas_totales.extend([0]*len(res))
-            aceleraciones_lat_totales.extend([aceleracion_lateral(omega*radio, radio) for _, omega in res])
-
-        else:
-            raise ValueError("Tipo de tramo desconocido")
+            aceleraciones_lat_totales.extend([aceleracion_lateral(y[1]*radio, radio) for y in res])
 
     return np.array(tiempos_totales)
 
 
 def main():
     tiempos = simular_trayectoria()
-    print(f"Tiempo total de la trayectoria: {tiempos[-1]:.2f} segundos")
+    print(f"\nTiempo total de la trayectoria: {tiempos[-1]:.2f} segundos")
 main()
